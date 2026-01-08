@@ -1,0 +1,352 @@
+import { useState, useEffect } from "react";
+import { base44 } from "@/api/base44Client";
+import { useQuery } from "@tanstack/react-query";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import { 
+  Table, TableBody, TableCell, TableHead, 
+  TableHeader, TableRow 
+} from "@/components/ui/table";
+import { 
+  Shield, TrendingUp, AlertTriangle, Clock, 
+  CheckCircle, Wallet, Users, Search, ArrowRight,
+  DollarSign, Ban, CreditCard
+} from "lucide-react";
+import { Link } from "react-router-dom";
+import { createPageUrl } from "@/utils";
+import { format } from "date-fns";
+import AdminStatsCard from "@/components/admin/AdminStatsCard";
+import TransactionStatusBadge from "@/components/escrow/TransactionStatusBadge";
+
+export default function AdminDashboard() {
+  const [user, setUser] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    base44.auth.me().then(setUser).catch(() => {
+      base44.auth.redirectToLogin(createPageUrl("AdminDashboard"));
+    });
+  }, []);
+
+  const { data: transactions = [], isLoading: loadingTx } = useQuery({
+    queryKey: ['admin-transactions'],
+    queryFn: () => base44.entities.Transaction.list('-created_date', 100),
+    enabled: !!user && user.role === 'admin'
+  });
+
+  const { data: disputes = [], isLoading: loadingDisputes } = useQuery({
+    queryKey: ['admin-disputes'],
+    queryFn: () => base44.entities.DisputeLog.list('-created_date', 50),
+    enabled: !!user && user.role === 'admin'
+  });
+
+  const { data: sellers = [], isLoading: loadingSellers } = useQuery({
+    queryKey: ['admin-sellers'],
+    queryFn: () => base44.entities.SellerProfile.list('-created_date', 50),
+    enabled: !!user && user.role === 'admin'
+  });
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="animate-pulse text-slate-500">Loading...</div>
+      </div>
+    );
+  }
+
+  if (user.role !== 'admin') {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Card className="max-w-md">
+          <CardContent className="p-6 text-center">
+            <Ban className="w-12 h-12 text-red-500 mx-auto mb-4" />
+            <h2 className="text-xl font-semibold text-slate-900 mb-2">Access Denied</h2>
+            <p className="text-slate-600 mb-4">You don't have permission to view this page.</p>
+            <Link to={createPageUrl("Home")}>
+              <Button>Go to Dashboard</Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const stats = {
+    totalTransactions: transactions.length,
+    totalVolume: transactions.reduce((sum, t) => sum + (t.amount || 0), 0),
+    totalFees: transactions.reduce((sum, t) => sum + (t.escrow_fee_amount || 0), 0),
+    pendingCount: transactions.filter(t => ['PENDING_PAYMENT', 'PAID', 'HELD', 'FULFILLED'].includes(t.status)).length,
+    completedCount: transactions.filter(t => t.status === 'RELEASED').length,
+    disputedCount: transactions.filter(t => t.status === 'DISPUTED').length,
+    openDisputes: disputes.filter(d => d.status === 'open').length,
+    verifiedSellers: sellers.filter(s => s.kyc_status === 'verified').length
+  };
+
+  const filteredTransactions = transactions.filter(t => 
+    t.transaction_id?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    t.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    t.buyer_email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    t.seller_email?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-xl bg-slate-900 flex items-center justify-center">
+              <Shield className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">Admin Dashboard</h1>
+              <p className="text-slate-500">Zmooth Escrow Platform Management</p>
+            </div>
+          </div>
+          <div className="flex gap-3">
+            <Link to={createPageUrl("AdminSellerVerification")}>
+              <Button variant="outline">
+                <Users className="w-4 h-4 mr-2" />
+                Seller Verification
+              </Button>
+            </Link>
+            <Link to={createPageUrl("PayoutManagement")}>
+              <Button className="bg-emerald-600 hover:bg-emerald-700">
+                <CreditCard className="w-4 h-4 mr-2" />
+                Payout Management
+              </Button>
+            </Link>
+          </div>
+        </div>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          <AdminStatsCard 
+            title="Total Transactions" 
+            value={stats.totalTransactions}
+            icon={TrendingUp}
+            color="blue"
+          />
+          <AdminStatsCard 
+            title="Platform Revenue" 
+            value={`KES ${stats.totalFees.toLocaleString()}`}
+            icon={DollarSign}
+            color="emerald"
+          />
+          <AdminStatsCard 
+            title="Open Disputes" 
+            value={stats.openDisputes}
+            icon={AlertTriangle}
+            color="red"
+          />
+          <AdminStatsCard 
+            title="Verified Sellers" 
+            value={stats.verifiedSellers}
+            icon={Users}
+            color="purple"
+          />
+        </div>
+
+        <Tabs defaultValue="transactions" className="space-y-6">
+          <TabsList className="bg-white border">
+            <TabsTrigger value="transactions">Transactions</TabsTrigger>
+            <TabsTrigger value="disputes">Disputes ({stats.openDisputes})</TabsTrigger>
+            <TabsTrigger value="sellers">Sellers</TabsTrigger>
+          </TabsList>
+
+          {/* Transactions Tab */}
+          <TabsContent value="transactions">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle>All Transactions</CardTitle>
+                <div className="relative w-64">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input 
+                    placeholder="Search transactions..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Title</TableHead>
+                      <TableHead>Buyer</TableHead>
+                      <TableHead>Seller</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Date</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredTransactions.map((tx) => (
+                      <TableRow key={tx.id}>
+                        <TableCell className="font-mono text-xs">{tx.transaction_id}</TableCell>
+                        <TableCell className="font-medium max-w-[150px] truncate">{tx.title}</TableCell>
+                        <TableCell className="text-sm">{tx.buyer_email?.split('@')[0]}</TableCell>
+                        <TableCell className="text-sm">{tx.seller_email?.split('@')[0]}</TableCell>
+                        <TableCell className="font-medium">
+                          {tx.currency} {tx.amount?.toLocaleString()}
+                        </TableCell>
+                        <TableCell>
+                          <TransactionStatusBadge status={tx.status} />
+                        </TableCell>
+                        <TableCell className="text-sm text-slate-500">
+                          {format(new Date(tx.created_date), "MMM d")}
+                        </TableCell>
+                        <TableCell>
+                          <Link to={createPageUrl(`TransactionDetail?id=${tx.id}`)}>
+                            <Button variant="ghost" size="sm">
+                              <ArrowRight className="w-4 h-4" />
+                            </Button>
+                          </Link>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Disputes Tab */}
+          <TabsContent value="disputes">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-red-500" />
+                  Open Disputes
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {disputes.filter(d => d.status === 'open').length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <CheckCircle className="w-12 h-12 mx-auto mb-3 text-emerald-500" />
+                    <p>No open disputes</p>
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Transaction</TableHead>
+                        <TableHead>Raised By</TableHead>
+                        <TableHead>Reason</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {disputes.filter(d => d.status === 'open').map((dispute) => (
+                        <TableRow key={dispute.id}>
+                          <TableCell className="font-mono text-xs">{dispute.transaction_id}</TableCell>
+                          <TableCell>{dispute.raised_by_email}</TableCell>
+                          <TableCell>{dispute.reason}</TableCell>
+                          <TableCell>{format(new Date(dispute.created_date), "MMM d, yyyy")}</TableCell>
+                          <TableCell>
+                            <span className="px-2 py-1 rounded-full bg-red-100 text-red-700 text-xs font-medium">
+                              {dispute.status}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <Link to={createPageUrl(`DisputeDetail?id=${dispute.id}`)}>
+                              <Button variant="outline" size="sm">Review</Button>
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Sellers Tab */}
+          <TabsContent value="sellers">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle>Registered Sellers</CardTitle>
+                <Link to={createPageUrl("AdminSellerVerification")}>
+                  <Button variant="outline" size="sm">
+                    View All & Manage
+                    <ArrowRight className="w-4 h-4 ml-2" />
+                  </Button>
+                </Link>
+              </CardHeader>
+              <CardContent>
+                {sellers.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    No sellers registered yet
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Email</TableHead>
+                        <TableHead>Business</TableHead>
+                        <TableHead>KYC Status</TableHead>
+                        <TableHead>Tier</TableHead>
+                        <TableHead>Transactions</TableHead>
+                        <TableHead>Volume</TableHead>
+                        <TableHead>Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {sellers.slice(0, 10).map((seller) => (
+                        <TableRow key={seller.id}>
+                          <TableCell>{seller.user_email}</TableCell>
+                          <TableCell>{seller.business_name || '-'}</TableCell>
+                          <TableCell>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              seller.kyc_status === 'verified' 
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : seller.kyc_status === 'pending'
+                                ? 'bg-amber-100 text-amber-700'
+                                : seller.kyc_status === 'rejected'
+                                ? 'bg-red-100 text-red-700'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {seller.kyc_status || 'not_started'}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              seller.seller_tier === 'premium' 
+                                ? 'bg-purple-100 text-purple-700'
+                                : seller.seller_tier === 'verified'
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}>
+                              {seller.seller_tier?.replace('_', ' ') || 'new seller'}
+                            </span>
+                          </TableCell>
+                          <TableCell>{seller.total_transactions || 0}</TableCell>
+                          <TableCell>KES {(seller.total_volume || 0).toLocaleString()}</TableCell>
+                          <TableCell>
+                            {seller.is_suspended ? (
+                              <span className="text-red-600 text-sm">Suspended</span>
+                            ) : (
+                              <span className="text-emerald-600 text-sm">Active</span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </div>
+  );
+}
